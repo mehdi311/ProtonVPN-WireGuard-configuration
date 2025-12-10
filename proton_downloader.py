@@ -20,27 +20,34 @@ if not os.path.exists(DOWNLOAD_DIR):
 
 class ProtonVPN:
     def __init__(self):
-        self.options = webdriver.FirefoxOptions()
+        # *** Changed to Chrome Options ***
+        self.options = webdriver.ChromeOptions()
         
         # --- Optimization for GitHub Actions/Server Environments ---
         self.options.add_argument('--headless')
         self.options.add_argument('--no-sandbox')
         self.options.add_argument('--disable-dev-shm-usage')
+        self.options.add_argument('--disable-gpu') # Often necessary in Linux CI environments
+        self.options.add_argument('--window-size=1920,1080')
         
-        # *** Key Configuration: Setting the Download Path in Firefox ***
-        self.options.set_preference("browser.download.folderList", 2)
-        self.options.set_preference("browser.download.manager.showWhenStarting", False)
-        self.options.set_preference("browser.download.dir", DOWNLOAD_DIR)
-        self.options.set_preference("browser.helperApps.neverAsk.saveToDisk", "application/x-openvpn-profile, application/octet-stream, application/zip")
+        # *** Key Configuration: Setting the Download Path in Chrome ***
+        prefs = {
+            "download.default_directory": DOWNLOAD_DIR,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True 
+        }
+        self.options.add_experimental_option("prefs", prefs)
 
         self.driver = None
 
     def setup(self):
-        """Initializes the WebDriver (Firefox) with Headless options."""
-        self.driver = webdriver.Firefox(options=self.options)
+        """Initializes the WebDriver (Chrome) with Headless options."""
+        # *** Changed to Chrome WebDriver ***
+        self.driver = webdriver.Chrome(options=self.options)
         self.driver.set_window_size(1936, 1048)
         self.driver.implicitly_wait(10)
-        print("WebDriver initialized successfully in Headless mode.")
+        print("WebDriver initialized successfully in Headless mode (Chrome).")
 
     def teardown(self):
         """Closes the WebDriver."""
@@ -48,9 +55,11 @@ class ProtonVPN:
             self.driver.quit()
             print("WebDriver closed.")
 
+    # --- Login, Navigation, and Download Methods (Logic Remains the Same) ---
+    
     def login(self, username, password):
-        """Navigates to the login page and attempts to log in."""
         try:
+            # ... (Login logic remains the same) ...
             self.driver.get("https://protonvpn.com/")
             time.sleep(2)
 
@@ -80,7 +89,6 @@ class ProtonVPN:
             return False
 
     def navigate_to_downloads(self):
-        """Navigates to the Configurations Download section."""
         try:
             downloads_link_selector = (By.CSS_SELECTOR, ".navigation-item:nth-child(7) .text-ellipsis")
             WebDriverWait(self.driver, 10).until(
@@ -94,7 +102,6 @@ class ProtonVPN:
             return False
 
     def download_configurations(self):
-        """Opens and downloads ALL available configurations for all countries."""
         try:
             self.driver.execute_script("window.scrollTo(0,0)")
             time.sleep(2)
@@ -162,11 +169,10 @@ class ProtonVPN:
             return False
 
     def logout(self):
-        """Logs out of the ProtonVPN account."""
         try:
             self.driver.find_element(By.CSS_SELECTOR, ".p-1").click()
             time.sleep(1)
-            self.driver.find_element(By.CSSATOR, ".mb-4 > .button").click()
+            self.driver.find_element(By.CSS_SELECTOR, ".mb-4 > .button").click()
             time.sleep(2)
             print("Logout Successful.")
             return True
@@ -175,7 +181,6 @@ class ProtonVPN:
             return False
 
     def run(self, username, password):
-        """Executes the full automation workflow."""
         try:
             self.setup()
             if self.login(username, password):
@@ -188,7 +193,6 @@ class ProtonVPN:
             self.teardown()
 
 if __name__ == "__main__":
-    # --- Optimized for GitHub Actions Secrets ---
     USERNAME = os.environ.get("VPN_USERNAME")
     PASSWORD = os.environ.get("VPN_PASSWORD")
     
