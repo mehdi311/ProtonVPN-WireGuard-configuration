@@ -5,6 +5,7 @@ import glob
 import json 
 import zipfile 
 import requests 
+import re 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -140,7 +141,7 @@ class ProtonVPN:
                 print(f"Error Logout: {e}")
                 return False
 
-    # --- WireGuard/IKEv2 Download (Unchanged from last successful version) ---
+    # --- WireGuard/IKEv2 Download (Unchanged) ---
     def process_wireguard_downloads(self, downloaded_ids):
         print("\n--- Starting WireGuard/IKEv2 Download Session ---")
         try:
@@ -255,8 +256,11 @@ class ProtonVPN:
             
         return all_downloads_finished, downloaded_ids
 
-    # --- OpenVPN Download Function (Unchanged from last successful version) ---
+    # --- OpenVPN Download Function (MODIFIED: Restored Random Delay) ---
     def process_openvpn_downloads(self, downloaded_ids):
+        """
+        Processes OpenVPN downloads for ALL countries (relying on default/auto-selected platform).
+        """
         print("\n--- Starting OpenVPN Download Session (Platform assumed to be set) ---")
         try:
             self.driver.execute_script("window.scrollTo(0,0)")
@@ -322,7 +326,8 @@ class ProtonVPN:
                         create_btn_selector = (By.CSS_SELECTOR, ".button")
                         create_btn = proto_row.find_element(*create_btn_selector)
 
-                        fixed_delay = 5 
+                        # --- CRITICAL CHANGE: Restore Random Delay for OpenVPN ---
+                        random_delay = random.randint(60, 90) 
                         
                         print(f"--- Processing country (OpenVPN {protocol}): {country_name} ---")
 
@@ -333,8 +338,8 @@ class ProtonVPN:
                             ActionChains(self.driver).move_to_element(create_btn).click().perform()
                             
                             download_counter += 1
-                            print(f"Successfully downloaded OpenVPN config (ID: {openvpn_server_id}). Total in session: {download_counter}. Waiting {fixed_delay}s...")
-                            time.sleep(fixed_delay)
+                            print(f"Successfully downloaded OpenVPN config (ID: {openvpn_server_id}). Total in session: {download_counter}. Waiting {random_delay}s...")
+                            time.sleep(random_delay) # Use random delay now
                             downloaded_ids.add(openvpn_server_id)
                             
                         except Exception as e:
@@ -357,38 +362,50 @@ class ProtonVPN:
         return all_downloads_finished, downloaded_ids
 
     
-    # --- File Organization (CRITICALLY MODIFIED: Dual Zip Logic) ---
+    # --- File Organization (Unchanged - uses improved name parsing from last step) ---
     def get_country_code_and_type(self, filename):
         """Extracts the Country Code (e.g., 'US') and Type ('OVPN' or 'WG') from a filename."""
+        
+        COUNTRY_CODE_MAP = {
+            'unitedstates': 'US',
+            'netherlands': 'NL',
+            'japan': 'JP',
+            'romania': 'RO',
+            'poland': 'PL',
+            'switzerland': 'CH',
+            'mexico': 'MX',
+            'norway': 'NO',
+            'canada': 'CA',
+            'singapore': 'SG',
+            'ireland': 'IE',
+            'iceland': 'IS',
+            'france': 'FR',
+            'germany': 'DE',
+        }
+        
         try:
-            # 1. Clean the filename: Remove numbering like ' (1)' and extension
-            name_without_ext = filename.rsplit('.', 1)[0]
-            base_name = name_without_ext.split('(')[0].strip().lower() 
-            
             country_code = 'UNKNOWN'
             file_type = 'UNKNOWN'
             
+            name_without_ext = filename.rsplit('.', 1)[0]
+            
+            # Remove numbering like ' (1)', ' (2)', etc. at the end
+            base_name = re.sub(r'\s*\(\d+\)$', '', name_without_ext).strip().lower()
+
             if filename.endswith(".ovpn"):
                 file_type = 'OVPN'
                 
-                # OpenVPN File: Example: 'netherlands_proton_udp'
                 parts = base_name.split('_')
-                if len(parts) >= 2:
+                if len(parts) >= 1:
                     country_name_part = parts[0]
-                    # Simple lookup for common names or just take first two letters
-                    if country_name_part == 'unitedstates':
-                        country_code = 'US'
-                    elif country_name_part == 'netherlands':
-                        country_code = 'NL'
-                    # Add more specific mappings if needed (e.g., Switzerland -> CH)
+                    
+                    if country_name_part in COUNTRY_CODE_MAP:
+                        country_code = COUNTRY_CODE_MAP[country_name_part]
                     else:
-                        # Default to first two letters
                         country_code = country_name_part[:2].upper()
                 
             elif filename.endswith(".conf"):
                 file_type = 'WG'
-                
-                # WireGuard File: Example: 'wg-US-FREE-11' or 'US-FREE#11'
                 
                 if base_name.startswith("wg-"):
                     name_without_prefix = base_name[3:]
@@ -402,17 +419,14 @@ class ProtonVPN:
             
             return country_code.strip(), file_type.strip()
             
-        except Exception:
+        except Exception as e:
+            print(f"Error during code extraction for {filename}: {e}")
             return 'UNKNOWN', 'UNKNOWN'
 
 
     def organize_and_send_files(self):
-        """
-        Organizes downloaded files by (Country, Type) and sends a separate zip file for each.
-        """
         print("\n###################### Organizing and Sending Files ######################")
         
-        # Structure: {'US': {'WG': [file_path1, ...], 'OVPN': [file_path2, ...]}, ...}
         grouped_files = {}
         
         for filename in os.listdir(DOWNLOAD_DIR):
@@ -420,14 +434,14 @@ class ProtonVPN:
                 file_path = os.path.join(DOWNLOAD_DIR, filename)
                 country_code, file_type = self.get_country_code_and_type(filename)
                 
+                if country_code == 'UNKNOWN' or file_type == 'UNKNOWN':
+                    print(f"Skipping file due to unknown type/code: {filename}")
+                    continue
+
                 if country_code not in grouped_files:
                     grouped_files[country_code] = {'WG': [], 'OVPN': []}
                 
-                if file_type in grouped_files[country_code]:
-                    grouped_files[country_code][file_type].append(file_path)
-                else:
-                    print(f"Warning: File type {file_type} not recognized for {filename}. Skipping.")
-
+                grouped_files[country_code][file_type].append(file_path)
 
         if not grouped_files:
             print("No new configuration files found to organize/send.")
@@ -435,7 +449,6 @@ class ProtonVPN:
 
         print(f"Found files for {len(grouped_files)} unique countries.")
 
-        # 2. Zip and Send each (Country, Type) combination
         sent_count = 0
         
         for country_code, types in grouped_files.items():
@@ -447,31 +460,30 @@ class ProtonVPN:
                 zip_filename = f"{country_code}_{file_type}_ProtonVPN_Configs.zip"
                 zip_path = os.path.join(os.getcwd(), zip_filename)
                 
-                # Determine detailed description for the caption
                 if file_type == 'WG':
-                    protocol_name = "WireGuard / IKEv2 (.conf)"
+                    protocol_name = "WireGuard / IKEv2"
+                    file_extension = ".conf"
                     usage = "مناسب برای WireGuard App, Clients"
                 elif file_type == 'OVPN':
-                    protocol_name = "OpenVPN (.ovpn)"
-                    usage = "مناسب برای OpenVPN Client, Routers, Android"
+                    protocol_name = "OpenVPN"
+                    file_extension = ".ovpn"
+                    usage = "مناسب برای OpenVPN Client, Routers, Android (شامل UDP و TCP)"
                 else:
                     protocol_name = "Configs"
+                    file_extension = ""
                     usage = ""
 
-                # Create the ZIP file
                 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for file_path in files:
                         zipf.write(file_path, os.path.basename(file_path))
 
                 print(f"Created {zip_filename} with {len(files)} configurations.")
 
-                # 3. Send to Telegram
                 if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
                     
-                    # Detailed Caption in Persian
                     caption = (
                         f"✅ کانفیگ‌های جدید VPN برای کشور **{country_code}**\n\n"
-                        f"**پروتکل:** {protocol_name}\n"
+                        f"**پروتکل:** {protocol_name} ({file_extension})\n"
                         f"**تعداد فایل:** {len(files)}\n"
                         f"**توضیحات:** {usage}\n"
                         f"**منبع:** ProtonVPN Free/Paid"
@@ -495,12 +507,10 @@ class ProtonVPN:
                 else:
                     print("Skipping Telegram send: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured.")
                 
-                # 4. Clean up the created zip file
                 os.remove(zip_path)
         
         print(f"File organization and sending process completed. Total files sent: {sent_count}.")
         
-        # 5. Clean up downloaded files and clear the log file
         print("Cleaning up individual configuration files...")
         for file in glob.glob(os.path.join(DOWNLOAD_DIR, '*')):
             os.remove(file)
